@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# GroundControl project artifacts
+data/
+runs/
+*.jsonl
+!tests/**/*.jsonl
