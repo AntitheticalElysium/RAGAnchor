@@ -12,26 +12,26 @@ from pathlib import Path
 import torch
 
 from raganchor.config import RUNS_DIR, SETTINGS
-from raganchor.data.ragtruth import Source, load_responses, load_sources
-from raganchor.eval.metrics import aggregate, local_cost_usd
+from raganchor.data import Source, load_responses, load_sources
+from raganchor.eval.metrics import aggregate
 from raganchor.eval.nli import NLIScorer
-from raganchor.models.llm import LocalLLM
-from raganchor.pipeline.vanilla import VanillaRAG
-from raganchor.retrieval.hybrid import HybridRetriever
+from raganchor.llm import LocalLLM
+from raganchor.rag import VanillaRAG
+from raganchor.retrieval import HybridRetriever
 
 
 def select_sources(
     split: str, task_types: list[str] | None, limit: int | None
 ) -> list[Source]:
+    """Sources in a split, deduped in first-seen order. Split lives on responses."""
     srcmap = load_sources(task_types)
     seen: set[str] = set()
     ordered: list[Source] = []
-    for r in load_responses(split, task_types):
-        if r.source_id in seen:
+    for r in load_responses(split):
+        if r.source_id in seen or r.source_id not in srcmap:
             continue
         seen.add(r.source_id)
-        if r.source_id in srcmap:
-            ordered.append(srcmap[r.source_id])
+        ordered.append(srcmap[r.source_id])
         if limit and len(ordered) >= limit:
             break
     return ordered
@@ -60,8 +60,8 @@ def run_baseline(
                 "contexts": out.contexts,
                 "prompt_tokens": out.gen.prompt_tokens,
                 "completion_tokens": out.gen.completion_tokens,
-                "latency_s": round(out.gen.latency_s, 4),
-                "cost_usd": local_cost_usd(out.gen.latency_s),
+                "ttft_s": out.gen.ttft_s,
+                "latency_s": out.gen.latency_s,
             }
         )
         if i % 10 == 0 or i == len(sources):

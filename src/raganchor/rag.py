@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from raganchor.data.ragtruth import Source
-from raganchor.models.llm import GenerationResult, LocalLLM
-from raganchor.retrieval.hybrid import HybridRetriever
+from raganchor.data import Source
+from raganchor.llm import GenerationResult, LocalLLM
+from raganchor.retrieval import HybridRetriever
 
 GROUNDING_SYSTEM = (
     "You are a careful assistant. Use only the provided context. "

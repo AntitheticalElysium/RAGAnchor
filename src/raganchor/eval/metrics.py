@@ -1,33 +1,30 @@
-"""Cost accounting + run-level aggregation for the Pareto frontier."""
+"""Run-level aggregation. Real, raw axes only — faithfulness (provisional judge) +
+production cost/latency (TTFT, end-to-end, tokens). No invented composite scores;
+no dollar figures off a made-up rate. Further metrics get added when the ablation
+shows they matter, not before."""
 
 from __future__ import annotations
 
-from statistics import mean
-
-from raganchor.config import SETTINGS
-
-
-def local_cost_usd(latency_s: float) -> float:
-    return latency_s / 3600.0 * SETTINGS.cost.local_gpu_usd_per_hour
+from statistics import mean, median
 
 
 def aggregate(records: list[dict]) -> dict:
     if not records:
         return {}
-    faith = [r["faithfulness"] for r in records]
-    gate = SETTINGS.nli.faithfulness_gate
-    total_cost = sum(r["cost_usd"] for r in records)
-    mean_faith = mean(faith)
+
+    def avg(key: str) -> float:
+        return mean(r[key] for r in records)
+
     return {
         "n": len(records),
-        "mean_faithfulness": round(mean_faith, 4),
-        "unsupported_claim_rate": round(1 - mean_faith, 4),
-        "unfaithful_answer_rate": round(mean(f < gate for f in faith), 4),
-        "mean_contradiction_rate": round(mean(r["contradiction_rate"] for r in records), 4),
-        "mean_latency_s": round(mean(r["latency_s"] for r in records), 3),
-        "mean_completion_tokens": round(mean(r["completion_tokens"] for r in records), 1),
-        "usd_per_query": round(total_cost / len(records), 6),
-        "faithfulness_per_dollar": round(mean_faith / (total_cost / len(records)), 1)
-        if total_cost
-        else None,
+        # faithfulness axis (provisional until validated vs RAGTruth)
+        "mean_faithfulness": round(avg("faithfulness"), 4),
+        "mean_contradiction_rate": round(avg("contradiction_rate"), 4),
+        # cost / latency axis
+        "mean_ttft_s": round(avg("ttft_s"), 4),
+        "median_ttft_s": round(median(r["ttft_s"] for r in records), 4),
+        "mean_latency_s": round(avg("latency_s"), 4),
+        "median_latency_s": round(median(r["latency_s"] for r in records), 4),
+        "mean_prompt_tokens": round(avg("prompt_tokens"), 1),
+        "mean_completion_tokens": round(avg("completion_tokens"), 1),
     }

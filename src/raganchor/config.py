@@ -35,23 +35,17 @@ class RetrievalConfig(BaseModel):
 
 
 class NLIConfig(BaseModel):
+    # The automatic faithfulness *judge* for our own generations (RAGTruth's human
+    # labels annotate its generations, not ours). entailment_threshold is PROVISIONAL
+    # — to be validated against RAGTruth's labels before any number is trusted.
     model_id: str = "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli"
     entailment_threshold: float = 0.5  # claim supported if max entailment over context >= this
-    faithfulness_gate: float = 0.7  # answer-level score below this -> abstain/escalate
-
-
-class CostModel(BaseModel):
-    # local cost = wall-clock GPU seconds x hourly rate, so slow methods pay for it
-    local_gpu_usd_per_hour: float = 0.40
-    cloud_input_usd_per_mtok: float = 0.0  # placeholders for the Phase 3 cascade baseline
-    cloud_output_usd_per_mtok: float = 0.0
 
 
 class Settings(BaseModel):
     model: ModelConfig = Field(default_factory=ModelConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     nli: NLIConfig = Field(default_factory=NLIConfig)
-    cost: CostModel = Field(default_factory=CostModel)
     seed: int = 0
 
 

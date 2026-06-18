@@ -27,7 +27,7 @@ def baseline(
 @app.command()
 def smoke():
     """Load the model and generate once — sanity check."""
-    from raganchor.models.llm import LocalLLM
+    from raganchor.llm import LocalLLM
 
     llm = LocalLLM()
     msgs = [
@@ -35,7 +35,7 @@ def smoke():
         {"role": "user", "content": "Context: The shop is at 826 B Street.\n\nWhere is the shop?"},
     ]
     r = llm.generate(msgs, max_new_tokens=48)
-    typer.echo(f"{r.text}\n[{r.completion_tokens} tok, {r.latency_s:.2f}s]")
+    typer.echo(f"{r.text}\n[{r.completion_tokens} tok, ttft {r.ttft_s:.2f}s, total {r.latency_s:.2f}s]")
 
 
 if __name__ == "__main__":

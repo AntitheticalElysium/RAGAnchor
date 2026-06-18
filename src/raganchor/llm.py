@@ -1,13 +1,20 @@
 """Local 4-bit model. Returns text + token counts + latency for the cost metrics.
+We stream so TTFT (time to first token) is a real measurement, not a guess.
 `logits_processors` is threaded through now so Phase-2 decode methods drop in later."""
 
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from threading import Thread
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    TextIteratorStreamer,
+)
 
 from raganchor.config import SETTINGS, ModelConfig
 
@@ -19,7 +26,8 @@ class GenerationResult:
     text: str
     prompt_tokens: int
     completion_tokens: int
-    latency_s: float
+    ttft_s: float  # time to first token
+    latency_s: float  # end to end
 
     @property
     def total_tokens(self) -> int:
@@ -48,7 +56,6 @@ class LocalLLM:
         )
         self.model.eval()
 
-    @torch.inference_mode()
     def generate(
         self,
         messages: list[dict[str, str]],
@@ -72,19 +79,37 @@ class LocalLLM:
         if logits_processors is not None:
             gen_kwargs["logits_processor"] = logits_processors
 
+        # Stream on a worker thread; the main thread times the first chunk (TTFT)
+        # and the last (end-to-end), and reassembles the text.
+        streamer = TextIteratorStreamer(
+            self.tokenizer, skip_prompt=True, skip_special_tokens=True
+        )
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         t0 = time.perf_counter()
-        out = self.model.generate(**inputs, **gen_kwargs)
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
+
+        @torch.inference_mode()
+        def _run() -> None:
+            self.model.generate(**inputs, **gen_kwargs, streamer=streamer)
+
+        thread = Thread(target=_run)
+        thread.start()
+
+        chunks: list[str] = []
+        ttft = 0.0
+        for chunk in streamer:
+            if not chunks:
+                ttft = time.perf_counter() - t0
+            chunks.append(chunk)
+        thread.join()
         latency = time.perf_counter() - t0
 
-        new_tokens = out[0][prompt_tokens:]
-        text = self.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+        text = "".join(chunks).strip()
+        completion_tokens = len(self.tokenizer(text, add_special_tokens=False)["input_ids"])
         return GenerationResult(
             text=text,
             prompt_tokens=prompt_tokens,
-            completion_tokens=int(new_tokens.shape[0]),
-            latency_s=latency,
+            completion_tokens=completion_tokens,
+            ttft_s=round(ttft, 4),
+            latency_s=round(latency, 4),
         )
