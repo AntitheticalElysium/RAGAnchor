@@ -17,9 +17,9 @@ def aggregate(records: list[dict]) -> dict:
 
     return {
         "n": len(records),
-        # faithfulness axis (provisional until validated vs RAGTruth)
-        "mean_faithfulness": round(avg("faithfulness"), 4),
-        "mean_contradiction_rate": round(avg("contradiction_rate"), 4),
+        # faithfulness axis (LettuceDetect judge, response-level like RAGTruth)
+        "faithful_rate": round(avg("is_faithful"), 4),  # frac of answers with no flagged span
+        "mean_hallucination_spans": round(avg("n_hallucination_spans"), 3),
         # cost / latency axis
         "mean_ttft_s": round(avg("ttft_s"), 4),
         "median_ttft_s": round(median(r["ttft_s"] for r in records), 4),

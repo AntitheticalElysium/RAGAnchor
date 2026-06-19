@@ -24,6 +24,7 @@ class Source:
     source_id: str
     task_type: str  # "QA" | "Summary" | "Data2txt"
     context: str  # grounding text: the doc / rendered record / joined passages
+    prompt: str = ""  # RAGTruth's raw prompt — for faithful judge reproduction
     question: str | None = None  # QA only
     passages: list[str] = field(default_factory=list)  # QA: units to retrieve over
 
@@ -61,20 +62,22 @@ def _split_passages(passages: str) -> list[str]:
 def _to_source(row: dict) -> Source:
     task = row["task_type"]
     info = row["source_info"]
+    prompt = row.get("prompt", "")
     if task == "QA":
         passages = _split_passages(info["passages"])
         return Source(
             source_id=row["source_id"],
             task_type=task,
             context="\n\n".join(passages),
+            prompt=prompt,
             question=info["question"],
             passages=passages,
         )
     if task == "Data2txt":
         context = _render_data2txt(info)
-        return Source(row["source_id"], task, context, passages=[context])
+        return Source(row["source_id"], task, context, prompt=prompt, passages=[context])
     # Summary: source_info is the raw document string
-    return Source(row["source_id"], task, info.strip(), passages=[info.strip()])
+    return Source(row["source_id"], task, info.strip(), prompt=prompt, passages=[info.strip()])
 
 
 def load_sources(

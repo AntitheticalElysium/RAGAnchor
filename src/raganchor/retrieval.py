@@ -1,4 +1,5 @@
-"""Hybrid retrieval: dense (bge-large) + BM25, fused with Reciprocal Rank Fusion."""
+"""Hybrid retrieval: dense (bge-large) + BM25, fused with Reciprocal Rank Fusion.
+Optional cross-encoder reranking (bge-reranker) on top, used here for rerank-then-prune."""
 
 from __future__ import annotations
 
@@ -9,6 +10,7 @@ import numpy as np
 import torch
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from raganchor.config import SETTINGS, RetrievalConfig
 
@@ -87,3 +89,45 @@ class HybridRetriever:
 
         ordered = sorted(fused.items(), key=lambda kv: -kv[1])[:k]
         return [Hit(index=i, text=self._passages[i], score=s) for i, s in ordered]
+
+
+class Reranker:
+    """Cross-encoder reranker (bge-reranker-v2-m3). Scores each (query, passage) pair
+    directly, then we keep the top `keep`. On RAGTruth QA (3 passages) this prunes."""
+
+    def __init__(self, cfg: RetrievalConfig | None = None):
+        self.cfg = cfg or SETTINGS.retrieval
+        self._model: AutoModelForSequenceClassification | None = None
+        self._tok: AutoTokenizer | None = None
+
+    def _load(self) -> None:
+        if self._model is not None:
+            return
+        dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+        self._tok = AutoTokenizer.from_pretrained(self.cfg.reranker_model)
+        self._model = AutoModelForSequenceClassification.from_pretrained(
+            self.cfg.reranker_model, torch_dtype=dtype
+        )
+        self._model.to("cuda" if torch.cuda.is_available() else "cpu").eval()
+
+    @torch.inference_mode()
+    def rerank(self, query: str, hits: list[Hit], keep: int | None = None) -> list[Hit]:
+        """Reorder hits by cross-encoder relevance; keep top `keep` (None = keep all)."""
+        if not hits:
+            return hits
+        self._load()
+        enc = self._tok(
+            [query] * len(hits),
+            [h.text for h in hits],
+            padding=True,
+            truncation=True,
+            max_length=512,
+            return_tensors="pt",
+        ).to(self._model.device)
+        logits = self._model(**enc).logits.squeeze(-1).float()
+        scores = torch.sigmoid(logits).cpu().tolist()
+        reranked = sorted(
+            (Hit(h.index, h.text, s) for h, s in zip(hits, scores)),
+            key=lambda h: -h.score,
+        )
+        return reranked[:keep] if keep else reranked

@@ -32,12 +32,19 @@ class RetrievalConfig(BaseModel):
     rrf_k: int = 60
     use_bm25: bool = True
     use_dense: bool = True
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"  # 0.6B cross-encoder, sigmoid relevance
+
+
+class JudgeConfig(BaseModel):
+    # Faithfulness judge: LettuceDetect (ModernBERT token-classifier trained on
+    # RAGTruth). Independent of NLI, so no circularity if we later ablate an NLI gate.
+    # large = 396M, 79.2 example-F1 on RAGTruth; base = 150M, 76.1.
+    model_path: str = "KRLabsOrg/lettucedect-large-modernbert-en-v1"
 
 
 class NLIConfig(BaseModel):
-    # The automatic faithfulness *judge* for our own generations (RAGTruth's human
-    # labels annotate its generations, not ours). entailment_threshold is PROVISIONAL
-    # — to be validated against RAGTruth's labels before any number is trusted.
+    # NOT the judge anymore — kept for the post-gen NLI-gate *method* to ablate later.
+    # entailment_threshold stays PROVISIONAL until that method is read + implemented.
     model_id: str = "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli"
     entailment_threshold: float = 0.5  # claim supported if max entailment over context >= this
 
@@ -45,6 +52,7 @@ class NLIConfig(BaseModel):
 class Settings(BaseModel):
     model: ModelConfig = Field(default_factory=ModelConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+    judge: JudgeConfig = Field(default_factory=JudgeConfig)
     nli: NLIConfig = Field(default_factory=NLIConfig)
     seed: int = 0
 
