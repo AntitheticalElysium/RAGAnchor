@@ -33,6 +33,10 @@ class RetrievalConfig(BaseModel):
     use_bm25: bool = True
     use_dense: bool = True
     reranker_model: str = "BAAI/bge-reranker-v2-m3"  # 0.6B cross-encoder, sigmoid relevance
+    # Provence query-aware extractive pruning (sentence-level). threshold 0.1 = conservative
+    # (~no quality drop), 0.5 = aggressive compression. QA-only (needs a question).
+    pruner_model: str = "naver/provence-reranker-debertav3-v1"  # DeBERTa-v3-large, 430M
+    prune_threshold: float = 0.1
 
 
 class JudgeConfig(BaseModel):
@@ -43,10 +47,22 @@ class JudgeConfig(BaseModel):
 
 
 class NLIConfig(BaseModel):
-    # NOT the judge anymore — kept for the post-gen NLI-gate *method* to ablate later.
-    # entailment_threshold stays PROVISIONAL until that method is read + implemented.
+    # Powers the post-gen NLI faithfulness-gate *method* (SummaC-ZS-style scorer).
+    # entailment_threshold = per-claim support cutoff (intrinsic to NLI, not the gate).
     model_id: str = "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli"
     entailment_threshold: float = 0.5  # claim supported if max entailment over context >= this
+
+
+class GateConfig(BaseModel):
+    # Post-gen faithfulness gate: if the answer's NLI support score < support_threshold
+    # (or any claim is contradicted), take action. support_threshold is TUNED on RAGTruth
+    # train (experiments/tune_gate.py), not invented — placeholder until tuned.
+    support_threshold: float = 0.75
+    fail_on_contradiction: bool = True
+    action: str = "abstain"  # "abstain" | "retry"  (retry regenerates, then abstains if still failing)
+    abstain_text: str = "I don't know."
+    max_retries: int = 1
+    retry_temperature: float = 0.7  # retry samples a different draft
 
 
 class Settings(BaseModel):
@@ -54,6 +70,7 @@ class Settings(BaseModel):
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     judge: JudgeConfig = Field(default_factory=JudgeConfig)
     nli: NLIConfig = Field(default_factory=NLIConfig)
+    gate: GateConfig = Field(default_factory=GateConfig)
     seed: int = 0
 
 

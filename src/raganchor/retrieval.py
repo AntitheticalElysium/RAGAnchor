@@ -131,3 +131,33 @@ class Reranker:
             key=lambda h: -h.score,
         )
         return reranked[:keep] if keep else reranked
+
+
+class ContextPruner:
+    """Provence query-aware extractive pruning: a DeBERTa-v3 cross-encoder that drops
+    context *sentences* irrelevant to the question (finer-grained than passage reranking).
+    Loads custom modeling code from the HF repo (trust_remote_code)."""
+
+    def __init__(self, cfg: RetrievalConfig | None = None):
+        self.cfg = cfg or SETTINGS.retrieval
+        self._model = None
+
+    def _load(self) -> None:
+        if self._model is not None:
+            return
+        from transformers import AutoModel
+
+        self._model = AutoModel.from_pretrained(self.cfg.pruner_model, trust_remote_code=True)
+        self._model.to("cuda" if torch.cuda.is_available() else "cpu").eval()
+
+    @torch.inference_mode()
+    def prune(self, question: str, passages: list[str], threshold: float | None = None) -> str:
+        """Return the question-relevant subset of the joined context, as one string."""
+        self._load()
+        out = self._model.process(
+            question,
+            "\n\n".join(passages),
+            threshold=self.cfg.prune_threshold if threshold is None else threshold,
+            always_select_title=False,  # our passages aren't titled documents
+        )
+        return out["pruned_context"]

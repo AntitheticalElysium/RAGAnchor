@@ -61,6 +61,8 @@ class LocalLLM:
         messages: list[dict[str, str]],
         *,
         max_new_tokens: int | None = None,
+        do_sample: bool | None = None,  # override cfg (e.g. sampling on gate retry)
+        temperature: float | None = None,
         logits_processors=None,
     ) -> GenerationResult:
         prompt = self.tokenizer.apply_chat_template(
@@ -69,13 +71,14 @@ class LocalLLM:
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
         prompt_tokens = int(inputs["input_ids"].shape[1])
 
+        sample = self.cfg.do_sample if do_sample is None else do_sample
         gen_kwargs: dict = dict(
             max_new_tokens=max_new_tokens or self.cfg.max_new_tokens,
-            do_sample=self.cfg.do_sample,
+            do_sample=sample,
             pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
         )
-        if self.cfg.do_sample:
-            gen_kwargs["temperature"] = self.cfg.temperature
+        if sample:
+            gen_kwargs["temperature"] = self.cfg.temperature if temperature is None else temperature
         if logits_processors is not None:
             gen_kwargs["logits_processor"] = logits_processors
 

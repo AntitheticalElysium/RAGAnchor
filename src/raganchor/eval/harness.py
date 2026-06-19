@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import gc
 import json
+import random
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,15 +16,31 @@ from raganchor.config import RUNS_DIR, SETTINGS
 from raganchor.data import Source, load_responses, load_sources
 from raganchor.eval.judge import FaithfulnessJudge
 from raganchor.eval.metrics import aggregate
+from raganchor.gate import NLIGate
 from raganchor.llm import LocalLLM
 from raganchor.rag import VanillaRAG
 from raganchor.retrieval import HybridRetriever
 
 
+def free_gpu(*objs) -> None:
+    """Release phase-1 models before the judge loads. On a 6GB GPU `del + empty_cache`
+    isn't enough — the inner model tensors linger (esp. trust_remote_code models), so we
+    null the known model-holding attributes first, then collect twice."""
+    for o in objs:
+        for attr in ("model", "_model", "_embedder", "tokenizer", "detector", "scorer"):
+            if hasattr(o, attr):
+                setattr(o, attr, None)
+    for _ in range(2):
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
 def select_sources(
     split: str, task_types: list[str] | None, limit: int | None
 ) -> list[Source]:
-    """Sources in a split, deduped in first-seen order. Split lives on responses."""
+    """Sources in a split (split lives on responses). Shuffled deterministically so a
+    --limit slice is representative across tasks, not task-ordered like the file."""
     srcmap = load_sources(task_types)
     seen: set[str] = set()
     ordered: list[Source] = []
@@ -32,22 +49,34 @@ def select_sources(
             continue
         seen.add(r.source_id)
         ordered.append(srcmap[r.source_id])
-        if limit and len(ordered) >= limit:
-            break
-    return ordered
+    random.Random(SETTINGS.seed).shuffle(ordered)
+    return ordered[:limit] if limit else ordered
 
 
-def generate_records(rag: VanillaRAG, sources: list[Source], tag: str = "") -> list[dict]:
-    """Phase 1: run the RAG over sources with the LLM resident. No judging here."""
+def generate_records(
+    rag: VanillaRAG, sources: list[Source], tag: str = "", gate: NLIGate | None = None
+) -> list[dict]:
+    """Phase 1: run the RAG over sources with the LLM (+ NLI gate, if given) resident.
+    No LettuceDetect judging here — that's phase 2."""
     records: list[dict] = []
     t0 = time.perf_counter()
     for i, src in enumerate(sources, 1):
-        out = rag.run(src)
-        records.append(
-            {
-                "source_id": src.source_id,
-                "task_type": src.task_type,
-                "question": src.question,
+        if gate is not None:
+            g = gate.run(rag, src)
+            rec = {
+                "answer": g.answer,
+                "contexts": g.contexts,
+                "prompt_tokens": g.gen.prompt_tokens,
+                "completion_tokens": g.gen.completion_tokens,
+                "ttft_s": g.gen.ttft_s,
+                "latency_s": g.latency_s,  # whole gate: gen + NLI + retries
+                "nli_support": g.nli_support,
+                "is_abstained": g.is_abstained,
+                "n_retries": g.n_retries,
+            }
+        else:
+            out = rag.run(src)
+            rec = {
                 "answer": out.answer,
                 "contexts": out.contexts,
                 "prompt_tokens": out.gen.prompt_tokens,
@@ -55,7 +84,8 @@ def generate_records(rag: VanillaRAG, sources: list[Source], tag: str = "") -> l
                 "ttft_s": out.gen.ttft_s,
                 "latency_s": out.gen.latency_s,
             }
-        )
+        rec = {"source_id": src.source_id, "task_type": src.task_type, "question": src.question, **rec}
+        records.append(rec)
         if i % 10 == 0 or i == len(sources):
             print(f"[gen{':'+tag if tag else ''}] {i}/{len(sources)}  ({time.perf_counter()-t0:.0f}s)")
     return records

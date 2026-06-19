@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from raganchor.data import Source
 from raganchor.llm import GenerationResult, LocalLLM
-from raganchor.retrieval import HybridRetriever, Reranker
+from raganchor.retrieval import ContextPruner, HybridRetriever, Reranker
 
 GROUNDING_SYSTEM = (
     "You are a careful assistant. Use only the provided context. "
@@ -37,19 +37,28 @@ class VanillaRAG:
         retriever: HybridRetriever | None = None,
         reranker: Reranker | None = None,
         rerank_keep: int | None = None,
+        pruner: ContextPruner | None = None,
+        prune_threshold: float | None = None,
     ):
         self.llm = llm
         self.retriever = retriever or HybridRetriever()
         self.reranker = reranker  # None => no reranking
         self.rerank_keep = rerank_keep  # passages kept after reranking (None = all)
+        self.pruner = pruner  # None => no context pruning
+        self.prune_threshold = prune_threshold
 
-    def run(self, source: Source) -> RAGOutput:
+    def run(self, source: Source, **gen_overrides) -> RAGOutput:
         if source.task_type == "QA" and source.question:
             self.retriever.index(source.passages)
             hits = self.retriever.retrieve(source.question)
             if self.reranker is not None:
                 hits = self.reranker.rerank(source.question, hits, keep=self.rerank_keep)
-            contexts = [h.text for h in hits]
+            if self.pruner is not None:
+                contexts = [self.pruner.prune(
+                    source.question, [h.text for h in hits], threshold=self.prune_threshold
+                )]
+            else:
+                contexts = [h.text for h in hits]
         else:
             contexts = [source.context]  # single source doc — retrieval is identity
 
@@ -58,5 +67,5 @@ class VanillaRAG:
             {"role": "system", "content": GROUNDING_SYSTEM},
             {"role": "user", "content": _build_user_prompt(source.task_type, context_block, source.question)},
         ]
-        gen = self.llm.generate(messages)
+        gen = self.llm.generate(messages, **gen_overrides)
         return RAGOutput(answer=gen.text, contexts=contexts, gen=gen)

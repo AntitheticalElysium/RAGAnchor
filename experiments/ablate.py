@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import torch
 
 from raganchor.config import RUNS_DIR
-from raganchor.eval.harness import generate_records, judge_records, select_sources
+from raganchor.eval.harness import free_gpu, generate_records, judge_records, select_sources
 from raganchor.eval.judge import FaithfulnessJudge
 from raganchor.eval.metrics import aggregate
 from raganchor.llm import LocalLLM
@@ -65,9 +65,8 @@ def main() -> None:
             llm, retriever, reranker=(reranker if keep else None), rerank_keep=keep
         )
         by_config[tag] = generate_records(rag, sources, tag=tag)
-    del llm, retriever, reranker, rag  # release every GPU ref before the judge loads
-    gc.collect()
-    torch.cuda.empty_cache()
+    free_gpu(llm, retriever, reranker)  # release every GPU ref before the judge loads
+    del llm, retriever, reranker, rag
 
     # --- phase 2: judge every config (judge resident) ---
     judge = FaithfulnessJudge()
