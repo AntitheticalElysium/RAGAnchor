@@ -36,6 +36,7 @@ from raganchor.retrieval import HybridRetriever, Reranker
 # one reranker are shared (load each model once — 6GB-friendly).
 CONFIGS: list[tuple[str, int | None]] = [
     ("baseline", None),
+    ("rerank_reorder", 3),  # reorder all 3 passages, keep all — isolates ordering (lost-in-the-middle)
     ("rerank_keep2", 2),
     ("rerank_keep1", 1),
 ]

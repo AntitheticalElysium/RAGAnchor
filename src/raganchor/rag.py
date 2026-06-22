@@ -30,6 +30,15 @@ def _build_user_prompt(task_type: str, context: str, question: str | None) -> st
     return f"Summarize the following, using only its content:\n\n{context}"
 
 
+def _build_nocontext_prompt(task_type: str, question: str | None) -> str:
+    """The CAD 'without-context' input: same instruction, context removed."""
+    if task_type == "QA":
+        return f"Question: {question}\nAnswer."
+    if task_type == "Data2txt":
+        return "Write an objective overview of this business."
+    return "Write a summary."
+
+
 class VanillaRAG:
     def __init__(
         self,
@@ -39,6 +48,9 @@ class VanillaRAG:
         rerank_keep: int | None = None,
         pruner: ContextPruner | None = None,
         prune_threshold: float | None = None,
+        cad_alpha: float | None = None,
+        cad_adaptive: bool = False,
+        cad_warmup: float = 0.3,
     ):
         self.llm = llm
         self.retriever = retriever or HybridRetriever()
@@ -46,6 +58,10 @@ class VanillaRAG:
         self.rerank_keep = rerank_keep  # passages kept after reranking (None = all)
         self.pruner = pruner  # None => no context pruning
         self.prune_threshold = prune_threshold
+        # CAD: cad_adaptive => AdaCAD (per-token alpha); else static alpha; else off
+        self.cad_alpha = cad_alpha
+        self.cad_adaptive = cad_adaptive
+        self.cad_warmup = cad_warmup  # AdaCAD warmup floor on alpha (0 = pure JSD)
 
     def run(self, source: Source, **gen_overrides) -> RAGOutput:
         if source.task_type == "QA" and source.question:
@@ -67,5 +83,15 @@ class VanillaRAG:
             {"role": "system", "content": GROUNDING_SYSTEM},
             {"role": "user", "content": _build_user_prompt(source.task_type, context_block, source.question)},
         ]
-        gen = self.llm.generate(messages, **gen_overrides)
+        if self.cad_alpha is not None or self.cad_adaptive:
+            nocontext = [
+                {"role": "system", "content": GROUNDING_SYSTEM},
+                {"role": "user", "content": _build_nocontext_prompt(source.task_type, source.question)},
+            ]
+            gen = self.llm.generate_cad(
+                messages, nocontext, alpha=self.cad_alpha,
+                adaptive=self.cad_adaptive, warmup_lambda=self.cad_warmup,
+            )
+        else:
+            gen = self.llm.generate(messages, **gen_overrides)
         return RAGOutput(answer=gen.text, contexts=contexts, gen=gen)

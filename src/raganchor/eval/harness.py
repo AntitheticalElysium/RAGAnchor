@@ -59,35 +59,46 @@ def generate_records(
     """Phase 1: run the RAG over sources with the LLM (+ NLI gate, if given) resident.
     No LettuceDetect judging here — that's phase 2."""
     records: list[dict] = []
+    skipped = 0
     t0 = time.perf_counter()
     for i, src in enumerate(sources, 1):
-        if gate is not None:
-            g = gate.run(rag, src)
-            rec = {
-                "answer": g.answer,
-                "contexts": g.contexts,
-                "prompt_tokens": g.gen.prompt_tokens,
-                "completion_tokens": g.gen.completion_tokens,
-                "ttft_s": g.gen.ttft_s,
-                "latency_s": g.latency_s,  # whole gate: gen + NLI + retries
-                "nli_support": g.nli_support,
-                "is_abstained": g.is_abstained,
-                "n_retries": g.n_retries,
-            }
-        else:
-            out = rag.run(src)
-            rec = {
-                "answer": out.answer,
-                "contexts": out.contexts,
-                "prompt_tokens": out.gen.prompt_tokens,
-                "completion_tokens": out.gen.completion_tokens,
-                "ttft_s": out.gen.ttft_s,
-                "latency_s": out.gen.latency_s,
-            }
+        try:
+            if gate is not None:
+                g = gate.run(rag, src)
+                rec = {
+                    "answer": g.answer,
+                    "contexts": g.contexts,
+                    "prompt_tokens": g.gen.prompt_tokens,
+                    "completion_tokens": g.gen.completion_tokens,
+                    "ttft_s": g.gen.ttft_s,
+                    "latency_s": g.latency_s,  # whole gate: gen + NLI + retries
+                    "nli_support": g.nli_support,
+                    "is_abstained": g.is_abstained,
+                    "n_retries": g.n_retries,
+                }
+            else:
+                out = rag.run(src)
+                rec = {
+                    "answer": out.answer,
+                    "contexts": out.contexts,
+                    "prompt_tokens": out.gen.prompt_tokens,
+                    "completion_tokens": out.gen.completion_tokens,
+                    "ttft_s": out.gen.ttft_s,
+                    "latency_s": out.gen.latency_s,
+                    "mean_alpha": out.gen.mean_alpha,  # CAD/AdaCAD only (else None)
+                }
+        except torch.cuda.OutOfMemoryError:
+            # one long example (e.g. CAD's 2x prefill) shouldn't kill the whole run
+            skipped += 1
+            torch.cuda.empty_cache()
+            print(f"[gen{':'+tag if tag else ''}] OOM on source {src.source_id} ({src.task_type}) — skipped")
+            continue
         rec = {"source_id": src.source_id, "task_type": src.task_type, "question": src.question, **rec}
         records.append(rec)
         if i % 10 == 0 or i == len(sources):
             print(f"[gen{':'+tag if tag else ''}] {i}/{len(sources)}  ({time.perf_counter()-t0:.0f}s)")
+    if skipped:
+        print(f"[gen{':'+tag if tag else ''}] skipped {skipped} OOM source(s)")
     return records
 
 
